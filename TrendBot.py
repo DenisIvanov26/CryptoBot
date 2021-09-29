@@ -2,12 +2,14 @@
 from logging import PercentStyle
 import ccxt
 import numpy as np
+import ta
 import schedule
 import pandas as pd
 pd.set_option('display.max_rows', None) #to see all rows requested without having ...
 import numpy as np
 from datetime import datetime
 import time
+
 
 #extra file containing config for exchanges and api keys
 import config
@@ -35,7 +37,7 @@ balances = exchange.fetch_balance()
 usdtbalance = balances['USDT']['total']
 usdtpossize  = usdtbalance / 5
 coinprice = exchange.fetch_ticker(pairing)
-print('CURRENT USDT POS SIZE:' + str(usdtpossize) + " LEVERAGE: " + str(leverage) + " COIN: " + pairing)
+#print(usdtpossize)
 #print(coinprice['last'])
 coinpossize = (usdtpossize / (coinprice['last'])) * leverage
 #print(coinpossize)
@@ -87,12 +89,15 @@ def trend(df, numbars = 7, multi = 3):
 
 starting = True
 long = False
-
+######################################################################################################TESTETSTETTS
+params = {
+    'test': True,  # test if it's valid, but don't actually place it
+}
 #checks for signals to buy or sell
 def Signal(df):
     global long
     global starting
-    print(df.tail(1))
+    print(df.tail(5))
     print("\n\nLOOKING FOR TRADE...\n\n")
     lastrow = len(df.index) - 1
     prevrow = lastrow - 1
@@ -131,24 +136,55 @@ def Signal(df):
         else:
             print('WARNING: ALREADY SHORT\n\n')
 
+#Checks if 30 < RSI <70 and if not sell part of position
+#for every minute it spends over/under sell certain % of current position
+def RSIcheck(df):
+    currrsi = df['momentum_rsi'].tail(1)
+    print(currrsi)
+    currorders = exchange.fetch_isolated_positions(pairing)
+    #START selling short position 20% per min
+    if int(currrsi) <= 30 and len(currorders) == 1:
+        #get current size not base size
+        currpossize = currorders['positionAmt']
+        order = exchange.create_market_buy_order(pairing, currpossize * 0.1)
+        print("\nWARNNING: RSI UNDER 30, CUT SHORT POSITION BY 10%")
+        print(f"{pd.to_datetime(order['info']['updateTime'], unit = 'ms').round('1s')}  ID: " + order['info']['orderId'] + " Type: " + pairing + " Price: " + str(round(float(order['info']['avgPrice']),2)) + " QTY: " + order['info']['origQty'] + " CostWithLeverage: " + str(round(order['cost'],2)) + "$ Cost: " + str(round((order['cost']/leverage),2)) + "$")
+    #RSI overbought sell part of position
+    if int(currrsi) >= 70 and len(currorders) == 1:
+        currpossize = currorders['positionAmt']
+        order = exchange.create_market_sell_order(pairing, currpossize * 0.1)
+        print("\nWARNNING: RSI OVER 70, CUT LONG POSITION BY 10%")
+        print(f"{pd.to_datetime(order['info']['updateTime'], unit = 'ms').round('1s')}  ID: " + order['info']['orderId'] + " Type: " + pairing + " Price: " + str(round(float(order['info']['avgPrice']),2)) + " QTY: " + order['info']['origQty'] + " CostWithLeverage: " + str(round(order['cost'],2)) + "$ Cost: " + str(round((order['cost']/leverage),2)) + "$")
+
+
+
 def run():
     #print(f"Bar at: {datetime.now().isoformat()}")
     #limit = how many to appear, timeframe = candlesticks time
     bars = exchange.fetch_ohlcv(pairing, timeframe = '1m', limit = 100)
-    df = pd.DataFrame(bars[:-1], columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit = 'ms')
-    #print(df)
-    trend_data = trend(df)
+    dataf = pd.DataFrame(bars[:-1], columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    dataf['timestamp'] = pd.to_datetime(dataf['timestamp'], unit = 'ms')
+    #print(dataf)
+    #rsi = ta.momentum.RSIIndicator()
+    trend_data = trend(dataf)
     Signal(trend_data)
+    #RSI check to start slowly exiting positions
+    TAmomentum = ta.add_momentum_ta(dataf, 'high','low','close','volume')
+    RSIcheck(TAmomentum)
 
-schedule.every(1).minute.do(run)
-#get last 3 bars determine combo
-#rating scale? -1 bearish 0 neutral 1 bullish
-#jcandles = exchange.fe
-#IN NEXT VERSION
+
+schedule.every(5).seconds.do(run)
+
+#RSI experiments
+
+#NOTES
+#1.GET RSI AND IF ABOVE CERTAIN AMOUNT
+#2.START TRAILING PROFITTAKING
+#3.RESET START
+#4.FIGURE OUT HOW FEES ARE CALCULATED
+#5.If witching position side get atr of only the most recent bars not all 7
+
 
 while(True):
     schedule.run_pending()
     time.sleep(1)
-
-
